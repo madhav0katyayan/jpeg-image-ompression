@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -55,6 +55,51 @@ function Step8ZigZagScanning({
   setIsAutoScanning,
 }) {
   const runRef = useRef(0);
+  const matrixWrapRef = useRef(null);
+
+  // Measure the real centre of every cell so the zig-zag line passes exactly
+  // through the cells (grid padding + gaps make a fixed 50-unit grid drift).
+  const [cellLayout, setCellLayout] = useState(null);
+
+  useLayoutEffect(() => {
+    const wrap = matrixWrapRef.current;
+    if (!wrap) return undefined;
+
+    function measure() {
+      // offsetLeft/offsetTop are layout positions (not affected by CSS
+      // entrance animations/transforms). The wrap is position:relative, so it
+      // is the offsetParent of every cell.
+      const cells = wrap.querySelectorAll(".step8MatrixCell");
+      if (cells.length !== 64 || wrap.offsetWidth === 0) return;
+
+      const centers = Array.from(cells, (cell) => [
+        cell.offsetLeft + cell.offsetWidth / 2,
+        cell.offsetTop + cell.offsetHeight / 2,
+      ]);
+
+      setCellLayout({
+        width: wrap.offsetWidth,
+        height: wrap.offsetHeight,
+        centers,
+      });
+    }
+
+    measure();
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    observer?.observe(wrap);
+    window.addEventListener("resize", measure);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+
+  function cellCenter(row, col) {
+    if (cellLayout) return cellLayout.centers[row * 8 + col];
+    return [col * 50 + 25, row * 50 + 25];
+  }
 
   const quantizedMatrix = useMemo(
     () => normalize8x8Block(quantizationData?.values),
@@ -204,25 +249,34 @@ function Step8ZigZagScanning({
         <div className="step8Card">
           <h3>Input: Quantized 8×8 Matrix With Zig-Zag Path</h3>
 
-          <div className="step8MatrixWrap">
+          <div className="step8MatrixWrap" ref={matrixWrapRef}>
             <svg
               className="step8PathOverlay"
-              viewBox="0 0 400 400"
+              viewBox={
+                cellLayout
+                  ? `0 0 ${cellLayout.width} ${cellLayout.height}`
+                  : "0 0 400 400"
+              }
               preserveAspectRatio="none"
+              style={
+                cellLayout
+                  ? { top: 0, left: 0, width: "100%", height: "100%" }
+                  : undefined
+              }
             >
               <polyline
                 className={`step8PathLine ${
                   isAutoScanning ? "step8PathAnimating" : ""
                 }`}
                 points={ZIG_ZAG_ORDER.slice(0, scannedCount || 1)
-                  .map(([r, c]) => `${c * 50 + 25},${r * 50 + 25}`)
+                  .map(([r, c]) => cellCenter(r, c).join(","))
                   .join(" ")}
               />
 
               <circle
                 className="step8PathDot"
-                cx={currentCell[1] * 50 + 25}
-                cy={currentCell[0] * 50 + 25}
+                cx={cellCenter(currentCell[0], currentCell[1])[0]}
+                cy={cellCenter(currentCell[0], currentCell[1])[1]}
                 r="7"
               />
             </svg>
@@ -290,7 +344,9 @@ function Step8ZigZagScanning({
           </div>
 
           <p className="step8PreviousNote">
-            Click Run Zig-Zag Scan to reveal the entire path.
+            {scannedCount >= 64
+              ? "Scan complete — all 64 positions read in zig-zag order."
+              : "Click Run Zig-Zag Scan to reveal the entire path."}
           </p>
         </div>
 
